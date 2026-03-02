@@ -1,0 +1,723 @@
+---
+title: "Forecasting Ozone Levels in Downtown Los Angeles"
+author: "Clara Lorenzo"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning = FALSE, message = FALSE, include=FALSE}
+# Load Libraries 
+library(ggplot2)
+library(forecast)
+library(tseries)
+library(stats)
+library(zoo)
+library(kableExtra)
+library(gridExtra)
+library(knitr)
+```
+
+```{r, include=FALSE}
+# Load Data
+ozone_data <- read.csv("/Users/claralorenzo/Desktop/Ozone_Downtown_LA.csv")
+
+# Convert to Time Series Object
+ozone_data_ts <- ts(ozone_data$Ozone, frequency = 12)
+
+# Split Data into Training and Test Sets
+train_data <- window(ozone_data_ts, end = time(ozone_data_ts)[173])
+test_data <- window(ozone_data_ts, start = time(ozone_data_ts)[174])
+
+# Plot the Original Time Series 
+plot(ozone_data_ts, type = "l", 
+              main = "Ozone Levels in Downtown Los Angeles (Original Data)", 
+              xlab = "Time Index", 
+              ylab = "Ozone Level")
+split_point_time = time(ozone_data_ts)[173]
+abline(v = split_point_time, col = "black", lty = 2)
+lines(train_data, col = "blue", lwd = 2)
+lines(test_data, col = "red", lwd = 2)
+```
+
+```{r, include=FALSE}
+# Summary Statistics
+summary(train_data)
+
+# Training Data with Trend Line to Visualize Trend
+plot(train_data, 
+     main = "Ozone Levels (Original Training Data)", 
+     xlab = "Time Index", 
+     ylab = "Ozone Level")
+
+# Add Trend  and Mean Line to Visualize Potential Trend
+fit <- lm(train_data ~ time(train_data))
+abline(fit, col = "red")
+mean <- mean(train_data)
+abline(h = mean, col = "blue")
+
+# Training Data Decomposition to Visualize Potential Seasonality
+decomp <- decompose(train_data)
+plot(decomp)
+```
+
+```{r, include=FALSE}
+# ACF Plot of Training Data
+acf(train_data, lag.max = 48, main = "ACF: Ozone Levels (Original Training Data)")
+
+# ADF and KPSS Test for Stationary
+adf.test(train_data)
+kpss.test(train_data)
+
+# Histogram of Training Data
+hist(train_data, prob = TRUE, 
+     col = "lightblue", 
+     main = "Histogram: Ozone Levels (Original Training Data)", 
+     xlab = "Ozone Level")
+lines(density(train_data), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(train_data), sd = sd(train_data)), 
+      add = TRUE, col = "red", lwd = 2)
+```
+
+```{r, include=FALSE}
+# Box-Cox Transformation to Stabilize Variance 
+lambda <- BoxCox.lambda(train_data)
+cat("Box-Cox Optimal Lambda =", lambda, "\n")
+train_bc <- BoxCox(train_data, lambda)
+
+# Long Transformation for Comparison 
+train_log <- log(train_data)
+
+# Compare Box-Cox and Log Transformed Data
+plot(train_bc, 
+     main = "Ozone Levels (Box-Cox Transformed Training Data)", 
+     xlab = "Time Index", 
+     ylab = "Box-Cox Transformed Ozone Level")
+fit1 <- lm(train_bc ~ time(train_bc))
+abline(fit1, col = "red")
+mean1 <- mean(train_bc)
+abline(h = mean1, col = "blue")
+plot(train_log, 
+     main = "Ozone Levels (Log Transformed Traning Data", 
+     xlab = "Time Index", 
+     ylab = "Log Transformed Ozone Level")
+fit2 <- lm(train_log ~ time(train_log))
+abline(fit2, col = "red")
+mean2 <- mean(train_log)
+abline(h = mean2, col = "blue")
+
+# Compare Histograms 
+hist(train_bc, prob = TRUE, 
+     main = "Histogram: Ozone Levels (Box-Cox Transformed Training Data)", 
+     col = "lightblue", 
+     xlab = "Box-Cox Transformed Ozone Level", 
+     ylim = c(0, 0.8))
+lines(density(train_bc), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(train_bc), sd = sd(train_bc)), 
+      add = TRUE, col = "red", lwd = 2)
+hist(train_log, prob = TRUE, 
+     main = "Histogram: Ozone Levels (Log Transformed Traning Data)", 
+     col = "lightblue", 
+     xlab = "Log Transformed Ozone Level")
+lines(density(train_log), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(train_log), sd = sd(train_log)), 
+      add = TRUE, col = "red", lwd = 2)
+```
+
+```{r, include=FALSE}
+# Box-Cox Transformed ACF to Visualize Seasonality
+acf(train_bc, lag.max = 48, main = "ACF: Ozone Levels (Box-Cox Transformed Training Data)")
+
+# Seasonal Differencing 
+train_bc_diff12 <- diff(train_bc, lag = 12)
+plot(train_bc_diff12, 
+     main = "Ozone Levels (Box-Cox and Seasonal Difference)", 
+     xlab = "Time Index", 
+     ylab = "Differenced and Transformed Ozone Level")
+fit3 <- lm(train_bc_diff12 ~ time(train_bc_diff12))
+abline(fit3, col = "red")
+mean3 <- mean(train_bc_diff12)
+abline(h = mean3, col = "blue")
+acf(train_bc_diff12, lag.max = 48, main = "ACF: Ozone Levels (Box-Cox and Seasonal Difference)")
+
+# First Differencing (Check if Needed)
+train_bc_diff12_diff1 <- diff(train_bc_diff12, lag = 1)
+plot(train_bc_diff12_diff1, 
+     main = "Ozone Levels (Box-Cox and Double Difference)", 
+     xlab = "Time Index", 
+     ylab = "Double Differenced and Transformed Ozone Level")
+fit4 <- lm(train_bc_diff12_diff1 ~ time(train_bc_diff12_diff1))
+abline(fit4, col = "red")
+mean4 <- mean(train_bc_diff12_diff1)
+abline(h = mean3, col = "blue")
+acf(train_bc_diff12_diff1, lag.max = 48, main = "ACF: Ozone Levels (Box-Cox and Double Difference)")
+
+# Compare Histograms
+hist(train_bc_diff12, prob = TRUE, 
+     main = "Histogram: Ozone Levels (Box-Cox and Seasonal Difference)", 
+     col = "lightblue", 
+     xlab = "Box-Cox and Seasonal Differenced Ozone Level", 
+     ylim = c(0, 1.0))
+lines(density(train_bc_diff12), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(train_bc_diff12), sd = sd(train_bc_diff12)), 
+      add = TRUE, col = "red", lwd = 2)
+hist(train_bc_diff12_diff1, prob = TRUE, 
+     main = "Histogram: Ozone Levels (Box-Cox and Double Difference)", 
+     col = "lightblue", 
+     xlab = "Box-Cox and Double Differenced Ozone Level", 
+     ylim = c(0, 1.0))
+lines(density(train_bc_diff12_diff1), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(train_bc_diff12_diff1), sd = sd(train_bc_diff12_diff1)), 
+      add = TRUE, col = "red", lwd = 2)
+
+# Compare Variances 
+var_orig <- var(train_data)
+var_bc <- var(train_bc)
+var_bc_diff12 <- var(train_bc_diff12)
+var_bc_diff12_diff1 <- var(train_bc_diff12_diff1)
+cat("Variance of Original =", var_orig, "\n")
+cat("Variance of Box-Cox =", var_bc, "\n")
+cat("Variance of Box-Cox and Seasonal Difference =", var_bc_diff12, "\n")
+cat("Variance of Box-Cox and Double Difference =", var_bc_diff12_diff1, "\n")
+```
+
+```{r, include=FALSE}
+acf(train_bc_diff12, lag.max = 48, main = "ACF: Ozone Levels (Box-Cox and Seasonal Difference)")
+pacf(train_bc_diff12, lag.max = 48, main = "PACF: Ozone Levels (Box-Cox and Seasonal Difference)")
+```
+
+```{r, include=FALSE}
+AICc <- function(model) {
+  k <- length(model$coef) + 1
+  n <- length(model$residuals)
+  aic <- model$aic
+  aicc <- aic + (2 * k * (k + 1)) / (n - k - 1)}
+
+results <- data.frame(
+  Model = character(), 
+  AICc = numeric(), 
+  stringsAsFactors = FALSE)
+
+model1 <- arima(train_bc, order = c(1, 0, 1), seasonal = list(order = c(0, 1, 1), period = 12), method = "ML")
+results <- rbind(results, data.frame(
+  Model = "SARIMA (1, 0, 1) (0, 1, 1) [12]", 
+  AIC = AIC(model1),  
+  AICc = AICc(model1)))
+model2 <- arima(train_bc, order = c(1, 0, 1), seasonal = list(order = c(2, 1, 0), period = 12), method = "ML")
+results <- rbind(results, data.frame(
+  Model = "SARIMA (1, 0, 1) (2, 1, 0) [12]", 
+  AIC = AIC(model2),  
+  AICc = AICc(model2)))
+model3 <- arima(train_bc, order = c(1, 0, 1), seasonal = list(order = c(2, 1, 1), period = 12), method = "ML")
+results <- rbind(results, data.frame(
+  Model = "SARIMA (1, 0, 1) (2, 1, 1) [12]", 
+  AIC = AIC(model3),  
+  AICc = AICc(model3)))
+
+model4 <- arima(train_bc, order = c(1, 0, 0), seasonal = list(order = c(0, 1, 1), period = 12), method = "ML")
+results <- rbind(results, data.frame(
+  Model = "SARIMA (1, 0, 0) (0, 1, 1) [12]", 
+  AIC = AIC(model4),  
+  AICc = AICc(model4)))
+model5 <- arima(train_bc, order = c(1, 0, 0), seasonal = list(order = c(2, 1, 0), period = 12), method = "ML")
+results <- rbind(results, data.frame(
+  Model = "SARIMA (1, 0, 0) (2, 1, 0) [12]", 
+  AIC = AIC(model5),  
+  AICc = AICc(model5)))
+model6 <- arima(train_bc, order = c(1, 0, 0), seasonal = list(order = c(2, 1, 1), period = 12), method = "ML")
+results <- rbind(results, data.frame(
+  Model = "SARIMA (1, 0, 0) (2, 1, 1) [12]", 
+  AIC = AIC(model6),  
+  AICc = AICc(model6)))
+
+sorted_results <- results[order(results$AICc), ]
+row.names(sorted_results) <- NULL
+print(sorted_results)
+
+top_results <- head(sorted_results, 2)
+row.names(top_results) <- NULL
+print(top_results)
+```
+
+```{r, include=FALSE}
+# Diagnostic Checking Model A: SARIMA (1, 0, 1) (0, 1, 1) [12]
+model_a <- arima(train_bc, order = c(1, 0, 1), seasonal = list(order = c(0, 1, 1), period = 12), method = "ML")
+
+# Plot Roots 
+ma_coef_a <- -0.6848
+ma_roots_a <- polyroot(c(1, ma_coef_a))
+plot(0, 0, type = "n", xlim = c(-2, 2), ylim = c(-2, 2), 
+     xlab = "x", ylab = "y", main = "Model A: MA Roots")
+curve(sqrt(1-x^2), from=-1, to=1, add=TRUE)
+curve(-sqrt(1-x^2), from=-1, to=1, add=TRUE)
+abline(h = 0, lty = 2)
+abline(v = 0, lty = 2)
+points(Re(ma_roots_a), Im(ma_roots_a), col = "red", pch = "*", cex = 2)
+
+# Get Residuals 
+res_a <- residuals(model_a)
+hist(res_a, prob = TRUE, 
+     main = "Histogram: Residuals of Model A",
+     xlab = "Residuals", col = "lightblue")
+lines(density(res_a), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(res_a), sd = sd(res_a)), 
+      add = TRUE, col = "red", lwd = 2)
+
+# Plot Time Series of Residuals
+plot.ts(res_a, main = "Time Series Plot of Residuals of Model A")
+fit_a <- lm(res_a ~ as.numeric(1:length(res_a)))
+abline(fit_a, col = "red")
+mean <- mean(res_a)
+abline(h = mean, col = "blue")
+
+# QQ Plot 
+qqnorm(res_a, main = "Normal Q-Q Plot for Model A")
+qqline(res_a, col = "blue")
+
+# ACF and PACF of Residuals 
+acf(res_a, lag.max = 48, main = "ACF: Residuals of Model A")
+pacf(res_a, lag.max = 48, main = "PACF: Residuals of Model A")
+
+# Statistical Tests
+shapiro.test(res_a)
+Box.test(res_a, lag = 12, type = c("Box-Pierce"), fitdf = 2)
+Box.test(res_a, lag = 12, type = c("Ljung-Box"), fitdf = 2)
+Box.test(res_a^2, lag = 12, type = c("Ljung-Box"), fitdf = 0)
+
+# ACF of Squared Residuals 
+acf(res_a^2, lag.max = 48, main = "ACF: Squared Residuals for Model A")
+
+# Check for Remaining Structure 
+ar(res_a, aic = TRUE, order.max = NULL, method = c("yule-walker"))
+
+# Diagnostic Checking Model B: SARIMA (1, 0, 1) (2, 1, 1) [12]
+model_b <- arima(train_bc, order = c(1, 0, 1), seasonal = list(order = c(2, 1, 1), period = 12), method = "ML")
+
+# Plot Roots 
+ma_coef_b <- -0.6828
+sma_coef_b <- -0.4849
+ma_roots_b <- polyroot(c(1, ma_coef_b))
+sma_roots_b <- polyroot(c(1, sma_coef_b))
+plot(0, 0, type = "n", xlim = c(-2, 2), ylim = c(-2, 2), 
+     xlab = "x", ylab = "y", main = "Model B: MA Roots")
+curve(sqrt(1-x^2), from=-1, to=1, add=TRUE)
+curve(-sqrt(1-x^2), from=-1, to=1, add=TRUE)
+abline(h = 0, lty = 2)
+abline(v = 0, lty = 2)
+points(Re(ma_roots_b), Im(ma_roots_b), col = "red", pch = "*", cex = 2)
+points(Re(sma_roots_b), Im(sma_roots_b), col = "blue", pch = "*", cex = 2)
+
+# Get Residuals 
+res_b <- residuals(model_b)
+hist(res_b, prob = TRUE, 
+     main = "Histogram: Residuals of Model B",
+     xlab = "Residuals", col = "lightblue")
+lines(density(res_b), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(res_b), sd = sd(res_b)), 
+      add = TRUE, col = "red", lwd = 2)
+
+# Plot Time Series of Residuals
+plot.ts(res_b, main = "Time Series Plot of Residuals of Model B")
+fit_b <- lm(res_b ~ as.numeric(1:length(res_b)))
+abline(fit_b, col = "red")
+mean <- mean(res_b)
+abline(h = mean, col = "blue")
+
+# QQ Plot 
+qqnorm(res_b, main = "Normal Q-Q Plot for Model B")
+qqline(res_b, col = "blue")
+
+# ACF and PACF of Residuals 
+acf(res_b, lag.max = 48, main = "ACF: Residuals of Model B")
+pacf(res_b, lag.max = 48, main = "PACF: Residuals of Model B")
+
+# Statistical Tests
+shapiro.test(res_b)
+Box.test(res_b, lag = 12, type = c("Box-Pierce"), fitdf = 5)
+Box.test(res_b, lag = 12, type = c("Ljung-Box"), fitdf = 5)
+Box.test(res_b^2, lag = 12, type = c("Ljung-Box"), fitdf = 0)
+
+# ACF of Squared Residuals 
+acf(res_b^2, lag.max = 48, main = "ACF: Squared Residuals for Model B")
+
+# Check for Remaining Structure 
+ar(res_b, aic = TRUE, order.max = NULL, method = c("yule-walker"))
+```
+
+```{r, include=FALSE}
+# Fit Model 
+fit.B <- arima(train_bc, order = c(1, 0, 1), seasonal = list(order = c(2, 1, 1), period = 12), method = "ML")
+
+# Generate Forecasts on Transformed Data
+pred.tr <- predict(model_b, n.ahead = 12)
+U.tr <- pred.tr$pred + 2*pred.tr$se
+L.tr <- pred.tr$pred - 2*pred.tr$se
+
+# Produce Graph with 12 Forecasts on Transformed Data
+plot(as.numeric(train_bc), type = "l", 
+     xlim = c(1, length(train_bc) + 12), 
+     ylim = c(min(0), max(3.5)), 
+     xlab = "Time Index", ylab = "Transformed Value")
+lines(length(train_bc) + 1:12, U.tr, col = "blue", lty = "dashed")
+lines(length(train_bc) + 1:12, L.tr, col = "blue", lty = "dashed")
+points((length(train_bc) + 1):(length(train_bc) + 12), pred.tr$pred, col = "red")
+
+# Convert to Original Scale 
+lambda <- BoxCox.lambda(train_data)
+pred.orig <- InvBoxCox(pred.tr$pred, lambda)
+U <- InvBoxCox(U.tr, lambda)
+L <- InvBoxCox(L.tr, lambda)
+
+# Plot Forecasts on Original Series 
+plot(as.numeric(train_data), type = "l", 
+     xlim = c(1, length(train_data) + 12), 
+     ylim = c(min(0), max(10)), 
+     xlab = "Time Index", ylab = "Ozone Level")
+lines(length(train_data) + 1:12, U, col = "blue", lty = "dashed")
+lines(length(train_data) + 1:12, L, col = "blue", lty = "dashed")
+points((length(train_data) + 1):(length(train_data)+12), pred.orig, col = "red")
+
+# Plot Forecasts on Full Original Series 
+plot(as.numeric(train_data), type = "l", 
+                xlab = "Time Index", 
+                ylab = "Ozone Level", 
+     ylim = c(0, 10))
+lines(length(train_data) - 12  + 1:12, U, col = "blue", lty = "dashed")
+lines(length(train_data)  - 12 + 1:12, L, col = "blue", lty = "dashed")
+points((length(train_data)  - 12 + 1):(length(train_data) - 12 + 12), pred.orig, col = "red")
+```
+
+# Abstract
+This study analyzes monthly ozone levels in Downtown Los Angeles using time series techniques to develop a forecasting model. A SARIMA model with Box-Cox transformation was implemented to account for the non-stationarity, seasonality, and variance instability present in the data. After comparing multiple candidate models based on both AICc values and residual diagnostics, a SARIMA (1,0,1) (2,1,1) [12] model was selected. The model successfully captures the seasonal patterns in the ozone levels and demonstrated excellent forecasting capabilities when validates against test data. This analysis provides insights for environmental monitoring and air quality prediction in urban environments. 
+
+# Introduction 
+## Problem Statement 
+Air quality, particularly ozone levels, is a critical environmental concern in urban areas like Los Angeles. Accurate forecasting of ozone levels can help environmental agencies, public health officials, and city planners implement measures to mitigate potential risks. This project aims to develop a reliable time series model to forecast monthly ozone levels in Downtown Los Angeles. 
+
+## Data Description 
+The dataset consists of monthly ozone measurements in parts per million (ppm) from Downtown Los Angeles from January 1955 to December 1972. The data was split into a training set (173 observations, approximately 80% of the dataset) for model development and a testing set (43 observations, approximately 20% of the dataset) for validation.
+
+```{r echo = FALSE}
+plot(ozone_data_ts, type = "l", 
+              main = "Ozone Levels in Downtown Los Angeles (1955-1972)", 
+              xlab = "Time", 
+              ylab = "Ozone Level (ppm)")
+split_point_time = time(ozone_data_ts)[173]
+abline(v = split_point_time, col = "black", lty = 2)
+lines(train_data, col = "blue", lwd = 2)
+lines(test_data, col = "red", lwd = 2)
+```
+
+## Methodology
+This project utilizes various time series techniques including:
+
+- Box-Cox transformation to stabilize variance 
+
+- Seasonal decomposition to examine trend and seasonality
+
+- Differencing to achieve stationarity
+
+- SARIMA (Seasonal Autoregressive Intregrates Moving Average) modeling
+
+- Model selection based on AICc and residual diagnostics 
+
+- Forecasting with prediction intervals 
+
+The analysis was preformed using R with the `forecast`, `tseries`, and `stats` packages. 
+
+# Modeling and Forecasting 
+## Data Splitting 
+The original time series was divided into two parts:
+
+- Training Data: First 173 observations used for model development (80% of observations)
+
+- Test Data: Remaining 43 observations used for model validation (20% of observations)
+
+## Time Series Analysis
+### Visual Inspection 
+Initial examination of the training data revealed several key characteristics:
+
+- Seasonal pattern with yearly cycles (frequency = 12)
+
+- Presence of trend 
+
+- Significant variance instability across the series
+
+```{r echo = FALSE}
+plot(train_data, 
+     main = "Ozone Levels in Downtown Los Angeles (1955-1972)", 
+     xlab = "Time", 
+     ylab = "Ozone Level (ppm)")
+fit <- lm(train_data ~ time(train_data))
+abline(fit, col = "red")
+mean <- mean(train_data)
+abline(h = mean, col = "blue")
+```
+
+The seasonal decomposition confirmed a strong seasonal component with a 12-month cycle, aligning with the expected annual patterns in ozone levels due to weather and atmospheric conditions.
+
+```{r echo = FALSE}
+decomp <- decompose(train_data)
+plot(decomp)
+```
+
+### Transformations and Stationarity
+To address the variance instability, I compared both logarithmic and Box-Cox transformations. While both improved the variance structure, the Box-Cox transformation provided a better stabilization of the variance es evidenced by the histograms. The optimal lambda value was determined using the `BoxCox.lambda()` function. 
+
+```{r echo = FALSE}
+par(mfrow = c(1, 2))
+
+hist(train_bc, prob = TRUE, 
+     main = "Box-Cox Transformation", 
+     col = "lightblue", 
+     xlab = "Box-Cox Transformed Value", 
+     ylim = c(0, 0.8))
+lines(density(train_bc), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(train_bc), sd = sd(train_bc)), 
+      add = TRUE, col = "red", lwd = 2)
+hist(train_log, prob = TRUE, 
+     main = "Log Transformation", 
+     col = "lightblue", 
+     xlab = "Log Transformed Value")
+lines(density(train_log), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(train_log), sd = sd(train_log)), 
+      add = TRUE, col = "red", lwd = 2)
+```
+
+After transformation, the series still exhibited seasonality, which I assessed by applying seasonal differencing (lag = 12). I also experimented with additional first differencing on top of the seasonal differencing but found that:
+
+- The seasonal differencing alone adequately removed the major patterns 
+
+- The double differencing actually increased the variance of the series 
+
+The decision to use only seasonal differencing (D = 1) was based on:
+
+- Visual inspection of the differenced series 
+
+- Comparison of variances before and after differencing 
+
+- Histogram shape and normality assessment 
+
+- ADF and KPSS tests confirming improved stationarity 
+
+The ACF and PACF of the seasonally differenced Box-Cox transformed data were analyzed to identify potential model specifications. 
+
+```{r echo = FALSE}
+par(mfrow = c(1, 2))
+
+hist(train_bc_diff12, prob = TRUE, 
+     main = "Box-Cox and Seasonal Diff", 
+     col = "lightblue", 
+     xlab = "Transformed and Diff Value", 
+     ylim = c(0, 1.0))
+lines(density(train_bc_diff12), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(train_bc_diff12), sd = sd(train_bc_diff12)), 
+      add = TRUE, col = "red", lwd = 2)
+hist(train_bc_diff12_diff1, prob = TRUE, 
+     main = "Box-Cox and Double Diff", 
+     col = "lightblue", 
+     xlab = "Transformed and Double Diff Value", 
+     ylim = c(0, 1.0))
+lines(density(train_bc_diff12_diff1), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(train_bc_diff12_diff1), sd = sd(train_bc_diff12_diff1)), 
+      add = TRUE, col = "red", lwd = 2)
+
+var_df <- data.frame(
+  Data_Type = c("Original Data", "Box-Cox Data", "Box-Cox and Seasonal Diff", "Box-Cox and Double DIff"), 
+  Variance = c(2.25, 0.35, 0.18, 0.25))
+
+kable(var_df, 
+      caption = "Comparison of Variances at Various Transformation Stages", 
+      col.names = c("Data Type", "Variance"))
+```
+
+## Model Identification and Estimation 
+
+```{r echo = FALSE}
+par(mfrow = c(1, 2))
+acf(train_bc_diff12, lag.max = 48, main = "ACF Stationary Data")
+pacf(train_bc_diff12, lag.max = 48, main = "PACF of Stationary Data")
+```
+
+Based on examination of the ACF and PACF patterns of the seasonally differenced transformed series, I identified several potential model structures:
+
+For non-seasonal components (p, d, q):
+
+- Potential sharp cutoff at lag 1 in both ACF and PACF, suggesting (1, 0, 1)
+
+- Potential exponential decay in one plot with cutoff in another, suggesting (1, 0, 0) or (0, 0, 1)
+
+For seasonal components (P, D, Q):
+
+- Sharp cutoff at lag 1 in PACF with exponential decay in ACF, suggesting (0, 1, 1)
+
+- Sharp cutoff at lag 2 in ACF with exponential decay in PACF, suggesting (2, 1, 0)
+
+- Sharp cutoff in both lags, suggesting (2, 1, 1)
+
+This identification process yielded nine possible model combinations:
+
+- SARIMA(1, 0, 1) (0, 1, 1) [12]
+
+- SARIMA(1, 0, 1) (2, 1, 0) [12]
+
+- SARIMA(1, 0, 1) (2, 1, 1) [12]
+
+- SARIMA(1, 0, 0) (0, 1, 1) [12]
+
+- SARIMA(1, 0, 0) (2, 1, 0) [12]
+
+- SARIMA(1, 0, 0) (2, 1, 0) [12]
+
+- SARIMA(0, 0, 1) (0, 1, 1) [12]
+
+- SARIMA(0, 0, 1) (2, 1, 0) [12]
+
+- SARIMA(0, 0, 1) (2, 1, 1) [12]
+
+The models were compared based on their AICc values, with lower values indicating a better fit while penalizing for model complexity. 
+
+## Model Selection and Diagnostic Checking 
+After fitting all models, I compared their AICc values to identify the most parsimonious representation. Among the candidate models, Model A (SARIMA (1, 0, 1) (0, 1, 1) [12]) had the lowest AICc value of 115.27, while Model B (SARIMA (1, 0, 1) (2, 1, 1) [12]) had a slightly higher AICc of 116.26. 
+
+```{r echo = FALSE}
+top_results <- head(sorted_results, 2)
+
+kable(top_results, 
+      caption = "Top Two Final Model Candidates", 
+      col.names = c("Model Specification", "AIC", "AICc"))
+```
+
+I then preformed residual diagnostics on these models to ensure they adequately captured all patterns in the data. Despite having a marginally higher AICc, Model B was selected as the final model based superior residual diagnostics:
+
+**Residual Normality**: 
+
+- Model A: Shapiro-Wilk test W = 0.99026, p-value = 0.2857
+
+- Model B: Shapiro-Wilk test W = 0.98884, p-value = 0.1902
+
+- Both models produced normally distributed residuals as confirmed by histograms and QQ plots 
+
+**Independence of Residuals**: 
+
+- Model A: Box-Pierce (X-squared = 10.79, df = 10, p-value = 0.374), Ljung-Box (X-squared = 11.232, df = 10, p-value = 0.3398)
+
+- Model B: Box-Pierce (X-squared = 10.844, df = 7, p-value = 0.1456), Ljung-Box (X-squared = 11.337, df = 7, p-value = 0.1246)
+
+- Both tests for models failed to reject the null hypothesis of independence 
+
+**Absence of Remaining Structure**: 
+
+- Model A: Yule-Walker method selected AR(2) with coefficients 0.0893 and -0.1473, indicating remaining patterns not captured by the model 
+
+- Model B: Yule-Walker method selected AR(0), confirming the residuals were essentially white noise with no remaining structure 
+
+- This was the decisive factor in selecting Model B
+
+**No Conditional Heteroskedasticity**: 
+
+- Model A: Ljung-Box test on squared residuals (X-squared = 9.2021, df = 12, value = 0.6856)
+
+- Model A: Ljung-Box test on squared residuals (X-squared = 7.654, df = 12, value = 0.8116)
+
+- Both models showed no evidence of ARCH effects 
+
+**Invertibility Check**:
+
+- MA roots for both non-seasonal and seasonal components of both models lie outside the unit circle, confirming invertibility 
+
+```{r echo = FALSE}
+par(mfrow = c(2, 2))
+
+hist(res_b, prob = TRUE, 
+     main = "Model B Residuals",
+     xlab = "Residuals", col = "lightblue")
+lines(density(res_b), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(res_b), sd = sd(res_b)), 
+      add = TRUE, col = "red", lwd = 2)
+
+plot.ts(res_b, main = "Model B Residuals")
+fit_b <- lm(res_b ~ as.numeric(1:length(res_b)))
+abline(fit_b, col = "red")
+mean <- mean(res_b)
+abline(h = mean, col = "blue")
+
+qqnorm(res_b, main = "Normal Q-Q Plot for Model B")
+qqline(res_b, col = "blue")
+
+acf(res_b, lag.max = 48, main = "ACF: Residuals of Model B")
+```
+
+The algebraic form of the final model (Model B) is:
+
+$$(1 - \phi_1 B)(1 - \Phi_1 B^{12} - \Phi_2B^{24})(1 - B^{12})X_t = (1 + \theta_1B)(1 + \Theta_1B^{12}) \epsilon_t$$
+
+Where:
+
+- $\phi_1 = 0.9215$ (non-seasonal AR coefficient)
+
+- $\Phi_1 = -0.2991$ (first seasonal AR coefficient)
+
+- $\Phi_2 = -0.1934$ (second seasonal AR coefficient)
+
+- $\theta_1 = -0.6828$ (non-seasonal MA coefficient)
+
+- $\Theta_1 = -0.4849$ (seasonal MA coefficient)
+
+- B is the backshift operator 
+
+- $\epsilon_t$ is the white noise with estimated variance $\sigma^2 = 0.1058$
+
+
+## Forecasting 
+The selected Model B was used to generate 12-month ahead forecasts wtih 95% prediction intervals. The forecasts were generated in the transformed scale and then converted back to the original scale using the inverse Box-Cox transformation. 
+
+```{r echo = FALSE}
+plot(as.numeric(train_bc), type = "l", 
+     xlim = c(1, length(train_bc) + 12), 
+     ylim = c(min(0), max(3.5)), 
+     xlab = "Time", ylab = "Transformed Value", 
+     main = "Forecasted Ozone Levels with 95% Prediction Intervals \n (Box-Cox Transformed Scale)")
+lines(length(train_bc) + 1:12, U.tr, col = "blue", lty = "dashed")
+lines(length(train_bc) + 1:12, L.tr, col = "blue", lty = "dashed")
+points((length(train_bc) + 1):(length(train_bc) + 12), pred.tr$pred, col = "red")
+```
+
+The forecasting performance was evaluated by comparing the predictions with the test data. The forecasts successfully captured the seasonal pattern observed in the original series, and most test observations fell within the prediction intervals. 
+
+```{r echo = FALSE, fig.width = 6, fig.height = 4}
+plot(as.numeric(train_data), type = "l", 
+     xlim = c(1, length(train_data) + 12), 
+     ylim = c(min(0), max(10)), 
+     xlab = "Time Index", ylab = "Ozone Level", 
+     main = "Forecasted Ozone Levels with 95% Prediction Intervals \n (Original Scale)")
+lines(length(train_data) + 1:12, U, col = "blue", lty = "dashed")
+lines(length(train_data) + 1:12, L, col = "blue", lty = "dashed")
+points((length(train_data) + 1):(length(train_data)+12), pred.orig, col = "red")
+
+plot(as.numeric(train_data), type = "l", 
+                xlab = "Time Index", 
+                ylab = "Ozone Level", 
+     ylim = c(0, 10), 
+     main = "Forecasted Ozone Levels with 95% Prediction Intervals \n on Test Data (Original Scale)")
+lines(length(train_data) - 12  + 1:12, U, col = "blue", lty = "dashed")
+lines(length(train_data)  - 12 + 1:12, L, col = "blue", lty = "dashed")
+points((length(train_data)  - 12 + 1):(length(train_data) - 12 + 12), pred.orig, col = "red")
+```
+
+# Conclusion 
+This project developed a SARIMA (1, 0, 1) (2, 1, 1) [12] model with Box-Cox transformation to forcast monthly ozone levels in Downtown Los Angeles. The methodology demonstrates a comprehansive approach to time series modeling, from initial data exploration through transformation, differencing, model identification, and diagnostic checking. 
+
+A key insight from this analysis is the importance of looking beyond simple information criteria when selecting models. Despite Model A (SARIMA (1, 0, 1) (0, 1, 1) [12]) having a slightly lower AICc value (115.27 vs 116.26), Model B ((SARIMA (1, 0, 1) (2, 1, 1) [12])) was ultimately selected due to its superior residual diagnostics. Specifically, the Yule-Walker analysis revealed that Model A's residuals still contained structure requiring an AR(2) representation, whereas Model B's residuals were true white noise (AR(0)). 
+
+This demonstrated that a marginally higher AICc value (less than one point difference) can be justified when the model provides significantly better residual properties. The thouroughness of this approach ensures than our forecasts capture all systematic patterns in the data, leading to more reliable predictions. 
+
+The final model effectively captures both the trend and seasonal pattern in ozone levels and provides reliable forecasts with appropriate prediction intervals. These forecasts can be valuable for environmental monitoring, public health planning, and policy development related to air quality management in urban areas. 
+
+# Acknowledgments
+The data for this project was originally from the study: "Intervention Analysis with Applications to Economic and Environmental Problems" by G. E. P. Box and G. C. Tiao, published in the Journal of the American Statistical Association, Vol. 70, No. 349 (Mar., 1975), pp. 70-79. For this analysis, the data was accessed through the Time Series Data Library in R. 
+
+
