@@ -23,6 +23,7 @@ library(knitr)
 
 ```{r, include=FALSE}
 # Load Data
+# New Comment
 ozone_data <- read.csv("/Users/claralorenzo/Desktop/Ozone_Downtown_LA.csv")
 
 # Convert to Time Series Object
